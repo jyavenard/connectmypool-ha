@@ -1,0 +1,7 @@
+requests>=2.28
+Pillow>=9
+# Optional but recommended: enables reading the ORP chart's y-axis labels so the
+# calibration is scale-independent. Also needs the system 'tesseract' binary
+# (e.g. apt install tesseract-ocr / brew install tesseract). Without it, the
+# scraper falls back to fixed orp_setpoint/orp_axis_top config values.
+pytesseract>=0.3

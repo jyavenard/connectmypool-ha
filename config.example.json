@@ -1,0 +1,15 @@
+{
+  "username": "usernam@domain.org",
+  "password": "PUT-PASSWORD-HERE-OR-USE-CMP_PASS-ENV",
+  "pool_name": "JYA Pool",
+
+  "_comment_calibration": "PRIMARY calibration OCRs the chart y-axis labels (needs the tesseract binary); it is scale-independent and also reads the setpoint off the orange line. The values below are ONLY the fallback used when tesseract is unavailable.",
+  "tesseract_cmd": null,
+  "orp_units_per_gridline": 10,
+  "orp_setpoint": 690,
+  "orp_axis_top": 710,
+
+  "json_out": "/var/www/html/pool.json",
+  "debug_dir": "/tmp/cmp_debug",
+  "retries": 3
+}
