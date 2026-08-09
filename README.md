@@ -27,11 +27,14 @@ cp config.example.json config.json
 # edit config.json: set the password (or leave it and use the CMP_PASS env var)
 ```
 
-## IMPORTANT: data is only available while the pump runs
-ORP is measured only while the filter pump is running (the chart legend is
-literally "ORP (Pump Running)"). When the pump is off, the dashboard shows no
-current ORP. That is not an error — the script reports `"has_data": false` and
-leaves the last good `pool.json` in place.
+## Readings can be stale (ORP only samples while the pump runs)
+The scraper reads the **rightmost (most recent) point** of the 24-hour chart.
+ORP is only *sampled* while the filter pump runs (chart legend: "ORP (Pump
+Running)"), so the last point may be minutes or hours old — check `last_orp`
+("Last measured: N minutes ago"). Values are still present when the pump is
+currently off, as long as it ran at some point within the 24-hour window.
+`has_data` is only false if the chart is genuinely empty (no pump run in that
+window); the previous `pool.json` is then left in place.
 
 ## First run — verify
 This was validated end-to-end against the live pool (pH 7.6, ORP 637 vs. the
@@ -42,7 +45,8 @@ confirm it works in your environment:
 ./venv/bin/python cmp_pool.py --debug
 ```
 
-- Expect sane `ph` / `orp` / `orp_status` and `has_data: true` while the pump runs.
+- Expect sane `ph` / `orp` / `orp_status` and `has_data: true` (as long as the
+  pump has run within the last 24h).
 - If something is off, inspect the saved artifacts in `/tmp/cmp_debug/`:
   - `dashboard.html` — the populated page. pH is the `phMeasureLBL` span, ORP
     status the `orpMeasureLBL` span.
@@ -113,7 +117,7 @@ rest:
     sensor:
       - name: "Pool pH"
         value_template: "{{ value_json.ph }}"
-        # hold the last value when the pump is off instead of going "unknown"
+        # hold the last value when data is missing instead of going "unknown"
         availability: "{{ value_json.has_data }}"
         unique_id: pool_ph
         state_class: measurement
@@ -172,8 +176,9 @@ rest:
 - `orp_meta.source`: `ocr_axis` = calibrated from the OCR'd y-axis labels
   (scale-independent; `setpoint` is then read off the orange line too);
   `gridline_fallback` = OCR unavailable, used the configured anchor.
-- `has_data` is false when the pump is off (no current ORP). The `availability`
-  templates above make HA hold the last reading instead of showing "unknown".
+- `has_data` is false only when the chart is empty (no pump run in the last
+  24h). The `availability` templates above make HA hold the last reading instead
+  of showing "unknown".
 - `orp_status` is the raw text of the dashboard's ORP status field ("OK" or,
   in an alarm state, whatever the site shows there); `null` when there's no
   reading.
