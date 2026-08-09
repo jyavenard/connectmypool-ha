@@ -86,15 +86,15 @@ Three non-obvious things make or break it:
 3. The ORP chart image URL's filename index changes per render, so the scraper
    keys off the `ORPChart` element id, not the filename.
 
-## Schedule it (cron, every 10 min)
+## Schedule it (cron, hourly)
 ```cron
-*/10 * * * * /opt/connectmypool-ha/venv/bin/python /opt/connectmypool-ha/cmp_pool.py >/dev/null 2>&1
+0 * * * * /opt/connectmypool-ha/venv/bin/python /opt/connectmypool-ha/cmp_pool.py >/dev/null 2>&1
 ```
 The password can live in `config.json` (`chmod 600` it), in which case the cron
 line needs nothing extra — as above. If you'd rather keep it out of the file,
 omit `password` from `config.json` and prepend the env var instead:
 ```cron
-*/10 * * * * CMP_PASS='yourpassword' /opt/connectmypool-ha/venv/bin/python /opt/connectmypool-ha/cmp_pool.py >/dev/null 2>&1
+0 * * * * CMP_PASS='yourpassword' /opt/connectmypool-ha/venv/bin/python /opt/connectmypool-ha/cmp_pool.py >/dev/null 2>&1
 ```
 `CMP_USER`/`CMP_PASS` override whatever is in `config.json` when set.
 
@@ -149,6 +149,64 @@ rest:
           - warnings
         unique_id: pool_last_warning
 ```
+
+### Alternative: `platform: rest` + template sensors
+If you use the `sensor:` platform style, note it makes one HTTP request per
+sensor entry. To get separate entities from a single fetch, use one REST sensor
+plus a `template:` block that splits it. `value_json` is the parsed JSON body,
+so `value_json.ph` is the file's `ph` field, etc.
+
+```yaml
+sensor:
+  - platform: rest
+    name: Pool Chemistry
+    resource: https://www.avenard.org/pool/pool.json
+    method: GET
+    value_template: "{{ value_json.ph }}"   # sensor state; arbitrary pick
+    json_attributes:
+      - ph
+      - orp
+      - orp_status
+      - orp_setpoint
+      - pump_speed
+      - pump_state
+      - last_orp
+      - last_ph
+      - last_warning
+      - warnings
+      - has_data
+      - ok
+      - ts
+    scan_interval: 300
+    verify_ssl: true
+    headers:
+      User-Agent: Home Assistant
+
+template:
+  - sensor:
+      - name: Pool pH
+        state: "{{ state_attr('sensor.pool_chemistry','ph') }}"
+        availability: "{{ state_attr('sensor.pool_chemistry','has_data') }}"
+        state_class: measurement
+      - name: Pool ORP
+        state: "{{ state_attr('sensor.pool_chemistry','orp') }}"
+        unit_of_measurement: mV
+        availability: "{{ state_attr('sensor.pool_chemistry','has_data') }}"
+        state_class: measurement
+      - name: Pool ORP Status
+        state: "{{ state_attr('sensor.pool_chemistry','orp_status') }}"
+      - name: Pool ORP Set Point
+        state: "{{ state_attr('sensor.pool_chemistry','orp_setpoint') }}"
+        unit_of_measurement: mV
+      - name: Pool Last Warning
+        state: "{{ state_attr('sensor.pool_chemistry','last_warning') }}"
+        attributes:
+          warnings: "{{ state_attr('sensor.pool_chemistry','warnings') }}"
+```
+
+`pool.json` is a static file refreshed hourly by cron, so poll it gently
+(`scan_interval: 300`); don't reuse the aggressive interval you'd use against
+the live API.
 
 ## Output shape
 ```json
