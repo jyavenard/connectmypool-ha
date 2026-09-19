@@ -37,9 +37,9 @@ currently off, as long as it ran at some point within the 24-hour window.
 window); the previous `pool.json` is then left in place.
 
 ## First run — verify
-This was validated end-to-end against the live pool (pH 7.6, ORP 637 vs. the
-dashboard's ~635, status OK, setpoint 690, pump "MEDIUM SPEED / Running"). Just
-confirm it works in your environment:
+This was validated end-to-end against the live pool (pH 8.0, ORP set point 800,
+chlorine set point 3, ORP 706 off the chart, status OK). Just confirm it works
+in your environment:
 
 ```bash
 ./venv/bin/python cmp_pool.py --debug
@@ -48,42 +48,54 @@ confirm it works in your environment:
 - Expect sane `ph` / `orp` / `orp_status` and `has_data: true` (as long as the
   pump has run within the last 24h).
 - If something is off, inspect the saved artifacts in `/tmp/cmp_debug/`:
-  - `dashboard.html` — the populated page. pH is the `phMeasureLBL` span, ORP
-    status the `orpMeasureLBL` span.
-  - `orp_chart.png` — the ORP chart the pixel-scraper read. If ORP drifts, check
-    `orp_units_per_gridline` and `orp_setpoint` (the orange line's value).
+  - `chemistry.html` — the Chemistry page. pH is the `lblPHMeasure` span, the
+    set points are `lblORPSetPoint` / `lblChlorineSetPoint`. If these come back
+    empty, `lblMessage` says why (usually "Please select a pool first").
+  - `dashboard.html` — the populated dashboard: pump state and the warning grid.
+  - `orp_chart.png` — the ORP chart the pixel-scraper read.
 
-pH and ORP status are **exact** (read straight from the page). The ORP *number*
-is a pixel-scrape of the chart (~±3).
+pH, the ORP status and both set points are **exact** (read straight from the
+page). Only the ORP *number* is a pixel-scrape of the chart (~±3): the site
+shows ORP as a status word, never as an mV figure in text.
 
 ### ORP chart calibration (scale-independent)
-The ORP chart's y-axis auto-rescales and the setpoint can change, so nothing is
-hard-wired. Calibration order:
+The ORP chart's y-axis auto-rescales, so nothing is hard-wired. Calibration
+order:
 
 1. **Primary — OCR the y-axis labels** (needs the `tesseract` binary +
    `pytesseract`). The scraper reads the printed axis numbers directly, so it
-   works at any scale, and it also reads the **setpoint dynamically** from the
-   orange line's position. `orp_meta.source == "ocr_axis"`.
+   works at any scale. `orp_meta.source == "ocr_axis"`.
    - Install: `apt install tesseract-ocr` (Debian/Ubuntu) or
      `brew install tesseract` (macOS), plus `pip install pytesseract`.
 2. **Fallback — fixed anchor** (`orp_meta.source == "gridline_fallback"`), used
-   only if tesseract is missing. Maps pixels via `orp_units_per_gridline` and a
-   known anchor (`orp_setpoint`, else `orp_axis_top`). These are the *only*
-   hard-wired numbers, and only this path uses them — update them if your axis
-   rescales while running without tesseract.
+   only if tesseract is missing. It maps pixels via `orp_units_per_gridline`
+   and anchors the orange set-point line to the exact value read from
+   Chemistry.aspx. `orp_units_per_gridline` is the one number it cannot derive:
+   the axis switches between 10 and 20 units per gridline as it rescales, and
+   getting it wrong skews ORP by tens of mV. **Install tesseract** rather than
+   rely on this path.
+
+`orp_meta.setpoint` is the set point as read off the chart. It is a cross-check
+on the calibration, not the reported value — `orp_setpoint` comes from
+Chemistry.aspx and only falls back to the chart if that page fails
+(`chem_error` is then non-null).
 
 Check `orp_meta.source` in the output to see which path ran. If drift appears,
 inspect `/tmp/cmp_debug/orp_chart.png`.
 
 ### How the scrape works (for future maintenance)
-Three non-obvious things make or break it:
+Four non-obvious things make or break it:
 1. **Login** needs HTTPS + a `User-Agent` header, else no `.ASPXAUTH` cookie.
-2. **Pool selection**: click the pool's Dashboard button (`btnDash`) on
-   PoolShop.aspx. It 302-redirects to `Dashboard.aspx?Data=<signed-token>` — that
-   signed token (not `?PoolSystemID=`) is what selects the pool and renders a
-   fully populated dashboard. Following that redirect gives the values directly;
-   no further AJAX/postback is needed.
-3. The ORP chart image URL's filename index changes per render, so the scraper
+2. **The dashboard** needs the pool's `btnDash` button on PoolShop.aspx. It
+   302-redirects to `Dashboard.aspx?Data=<signed-token>` — that signed token
+   (not `?PoolSystemID=`) is what renders a populated dashboard. Following the
+   redirect gives the values directly; no further AJAX/postback is needed.
+3. **Chemistry.aspx needs a different selection**: the grid's "View / Monitor
+   Pool" button (`btnControl`). The dashboard's signed token does *not* select
+   the pool for it — without the `btnControl` post the page renders every value
+   span empty and `lblMessage` reads "Please select a pool first". Driving its
+   `updpnlChemistry` UpdatePanel timer postback does not help either.
+4. The ORP chart image URL's filename index changes per render, so the scraper
    keys off the `ORPChart` element id, not the filename.
 
 ## Schedule it (cron, hourly)
@@ -211,35 +223,43 @@ the live API.
 ## Output shape
 ```json
 {
-  "ph": 7.6,
-  "orp": 638,
+  "ph": 8.0,
+  "orp": 706,
   "orp_status": "OK",
-  "orp_setpoint": 690,
+  "orp_setpoint": 800,
+  "chlorine_setpoint": 3,
+  "system_status": "Pool system online",
   "pump_speed": "AUTO",
   "pump_state": "Last ran: 2 minutes ago",
   "last_orp": "Last measured: 11 minutes ago",
   "last_ph": "Last measured: 8 minutes ago",
   "warnings": [
-    {"date": "Aug 7 2026 03:05", "description": "Heating has been left on for more than 12 hours"}
+    {"date": "Sep 19 2026 14:34", "description": "pH has been outside set point by over 0.4 for more than 2 hours"}
   ],
-  "last_warning": "Heating has been left on for more than 12 hours",
-  "orp_meta": {"source": "ocr_axis", "labels": 11, "px_per_unit": 2.0, "setpoint": 690},
+  "last_warning": "pH has been outside set point by over 0.4 for more than 2 hours",
+  "orp_meta": {"source": "ocr_axis", "labels": 9, "px_per_unit": 0.46, "setpoint": 800},
+  "chem_error": null,
   "has_data": true,
-  "ts": 1754730000,
+  "ts": 1789825713,
   "ok": true
 }
 ```
-- `ph` and `orp_status` are read verbatim from the page (exact). `orp` is the
-  chart pixel-scrape (approx ±3).
+- `ph`, `orp_status`, `orp_setpoint`, `chlorine_setpoint` and `system_status`
+  are read verbatim from Chemistry.aspx (exact). `orp` is the chart
+  pixel-scrape (approx ±3).
+- `chem_error` is non-null when Chemistry.aspx could not be read; `orp_setpoint`
+  then falls back to `orp_meta.setpoint` (the chart) and `ph` to the dashboard.
 - `orp_meta.source`: `ocr_axis` = calibrated from the OCR'd y-axis labels
-  (scale-independent; `setpoint` is then read off the orange line too);
-  `gridline_fallback` = OCR unavailable, used the configured anchor.
+  (scale-independent); `gridline_fallback` = OCR unavailable, mapped pixels with
+  the configured `orp_units_per_gridline`.
+- `orp_meta.setpoint` is the set point read off the orange line — a sanity check
+  on the calibration; it should match `orp_setpoint`.
 - `has_data` is false only when the chart is empty (no pump run in the last
   24h). The `availability` templates above make HA hold the last reading instead
   of showing "unknown".
-- `orp_status` is the raw text of the dashboard's ORP status field ("OK" or,
-  in an alarm state, whatever the site shows there); `null` when there's no
-  reading.
+- `orp_status` is the raw text of the ORP status field ("OK" or, in an alarm
+  state, whatever the site shows there); `null` when there's no reading. The
+  site never publishes ORP in mV as text, which is why `orp` comes from pixels.
 - `warnings` is the dashboard's Warning/Fault grid (most recent first, up to
   10); `last_warning` is the newest description, `null` if none.
 - `ok`/`ts` — `ok:false` means the scrape itself failed (the error goes to
